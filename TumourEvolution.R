@@ -372,39 +372,61 @@ TumourGrowth = function(maxgen,beta,lambda,lambda_d,maxMuts,s){
   }
   
 
-TakeResection = function(TumourSample, S, par_mean,par_size,purity, ploidy = 2){
-  #Function has input "TumourSample" from a virtual tumour created from TumourGrowth(). Take a biopsy consisting of S cells.
-  #The tumour cells are assumed to be well-mixed in the tumour (a strong assumption!!).
-  #purity is the amount of cells in S that is tumour cells
+TakeResection = function(TumourSample,par_mean,par_size,purity,clonalamount, ploidy = 2){
+  #Function has input "TumourSample" from a virtual tumour created from TumourGrowth().
   #par_mean and size is the parameters of the negative binomial distribution (mean and size). 
+ 
   
+  #Get all mutation IDs in one single atomic vector:
+  AllMutations = unlist(TumourSample[[1]])
+  S = TumourSample[[3]]
+  #Get VAF of all somatic mutations using R-function table:
+  RealVAF = (table(AllMutations)/(ploidy*S))*purity
+  #Frequencies that are too low have very little chance of beeing seen, especially in the region of interest [0.01,0.25].
+  #Therefore, for simplicity discard too low frequencies as they will not influence the great picture anyway:
+  RealVAF = RealVAF[RealVAF >= 0.001]
   
-  #TumourSample may be a list of vectors of lists (for non-neutral tumours) or a vector of lists (neutral).
-  #Find total number of cells in virtual tumour:
-  TotalNumberOfCells = TumourSample[[2]]
-  #Take a biopsy of S cells:
-  #If tumour is neutral:
-  if(length(TumourSample)==3){
-    #Sample S cells from tumour of which S*purity are tumour cells. Assuming the cells are well-mixed all cells are equally likely to be chosen: 
-    TheCellsChosen = sample(TotalNumberOfCells,S,replace = FALSE)
-    TheSample = TumourSample[[1]][TheCellsChosen] 
-  }
-  #else, tumour is non-neutral:
-  else{
-    #Count how many cells are sampled from each group according to a multinomial distribution:
-    NrOfCellsChosenInEachGroup = rmultinom(1,S, TumourSample[[3]]/TumourSample[[2]])
-    #Which groups have one or more cells represented:
-    where = which(NrOfCellsChosenInEachGroup>0)
-    #Preallocate:
-    TheSample = vector(mode = "list", length = S)
-    temp = 1
-    for(i in where){
-      CellsChosenInGroupi = sample(TumourSample[[3]][i],NrOfCellsChosenInEachGroup[i],replace = FALSE)
-      TheSample[temp:(temp + NrOfCellsChosenInEachGroup[i]-1)] = TumourSample[[1]][[i]][CellsChosenInGroupi]
-      temp = temp + NrOfCellsChosenInEachGroup[i]
+  #Now, the OBSERVED frequencies of each somatic mutation is estimated assuming a Gamma-Poisson distributed read depth:
+  ObservedVAF = vector(mode = "numeric",length = length(RealVAF))
+  #Simulate read depth in each position:
+  ReadDepths = rnbinom(n = length(RealVAF), size = par_size, mu = par_mean )
+  for(i in 1:length(RealVAF)){
+    
+    if(ReadDepths[i] >= 10){
+      NrOfMutationsRecorded = rbinom(1,ReadDepths[i],as.numeric(RealVAF[i]))
+      
+      if(NrOfMutationsRecorded >= 3){
+        ObservedVAF[i] = NrOfMutationsRecorded/ReadDepths[i]
+      }
+      
     }
-  
+    
   }
+  ObservedVAF = ObservedVAF[ObservedVAF!= 0]
+  
+  #Add clonal mutations
+  NrOfclonalMutations = as.integer(((clonalamount)/(1-clonalamount))*length(ObservedVAF))
+  ClonalVAFs = vector(mode = "numeric",length = NrOfclonalMutations)
+  #Read depths for each clonal mutation:
+  ClonalReadDepths = rnbinom(n = NrOfclonalMutations, size = par_size, mu = par_mean )
+  for(i in 1:NrOfclonalMutations){
+
+    if(ClonalReadDepths[i] >= 10){
+      NrOfMutationsRecorded = rbinom(n=1,size = ClonalReadDepths[i],p=0.5*purity)
+
+      if(NrOfMutationsRecorded >= 3){
+        ClonalVAFs[i] = NrOfMutationsRecorded/ClonalReadDepths[i]
+      }
+
+    }
+
+  }
+  ObservedVAFs = c(ObservedVAF,ClonalVAFs)
+  ObservedVAFs = ObservedVAFs[ObservedVAFs != 0]
+
+  return(ObservedVAFs)
+}
+
   
   #Get all mutation IDs in one single atomic vector:
   AllMutations = unlist(TheSample)
